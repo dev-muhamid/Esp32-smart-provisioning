@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <string.h>
 
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "host/ble_att.h"
@@ -20,9 +21,11 @@ static char ble_ssid[32];
 static char ble_pass[64];
 static uint8_t ble_addr_type;
 static bool ble_shutdown_requested = false;
+static bool ble_restart_requested = false;
 
 static void ble_app_advertise(void);
 static void nimble_host_task(void *param);
+static void ble_restart_task(void *param);
 static int ble_gap_event(struct ble_gap_event *event, void *arg);
 static int gatt_copy_value(char *dst, size_t dst_len, struct ble_gatt_access_ctxt *ctxt);
 static int gatt_svr_access_wifi(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
@@ -54,6 +57,14 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
     },
 };
 
+static void ble_restart_task(void *param) {
+    (void)param;
+
+    ESP_LOGI(TAG, "Credentials received; restarting device...");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+}
+
 static int gatt_svr_access_wifi(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
     (void)conn_handle;
     (void)attr_handle;
@@ -76,13 +87,30 @@ static int gatt_svr_access_wifi(uint16_t conn_handle, uint16_t attr_handle, stru
             }
             ESP_LOGI(TAG, "Received PASS via BLE: %s", ble_pass);
 
-            if (strlen(ble_ssid) > 0 && strlen(ble_pass) > 0) {
+            if (!ble_restart_requested && strlen(ble_ssid) > 0 && strlen(ble_pass) > 0) {
                 ESP_LOGI(TAG, "Saving credentials received via BLE...");
-                save_wifi_credentials(ble_ssid, ble_pass); //save wifi_credentials to NVS
+                if (save_wifi_credentials(ble_ssid, ble_pass) != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to save Wi-Fi credentials from BLE");
+                    return BLE_ATT_ERR_UNLIKELY;
+                }
+
                 stop_provisioning_manager();
-                stop_ble_provisioning();
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                esp_restart();
+                ble_restart_requested = true;
+
+                BaseType_t task_created = xTaskCreate(
+                    ble_restart_task,
+                    "ble_restart_task",
+                    2048,
+                    NULL,
+                    tskIDLE_PRIORITY + 1,
+                    NULL
+                );
+
+                if (task_created != pdPASS) {
+                    ble_restart_requested = false;
+                    ESP_LOGE(TAG, "Failed to start BLE restart task");
+                    return BLE_ATT_ERR_UNLIKELY;
+                }
             }
         }
     }
