@@ -26,10 +26,29 @@ static void nimble_host_task(void *param);
 static int ble_gap_event(struct ble_gap_event *event, void *arg);
 static int gatt_copy_value(char *dst, size_t dst_len, struct ble_gatt_access_ctxt *ctxt);
 static int gatt_svr_access_wifi(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
+static void cleanup_and_restart_task(void *pvParameters);
 
 static const ble_uuid128_t gatt_svr_svc_uuid =
     BLE_UUID128_INIT(0x2d, 0x71, 0xa1, 0x20, 0x53, 0x75, 0x49, 0x73,
                      0xad, 0xc4, 0xbc, 0x1d, 0x8d, 0x5d, 0xf6, 0x19);
+
+// Task to handle graceful cleanup and restart
+static void cleanup_and_restart_task(void *pvParameters) {
+    (void)pvParameters;
+    // Give the BLE callback time to return
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    ESP_LOGI(TAG, "Stopping BLE provisioning...");
+    stop_ble_provisioning();
+    
+    ESP_LOGI(TAG, "Stopping provisioning manager...");
+    stop_provisioning_manager();
+    
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ESP_LOGI(TAG, "Performing graceful restart...");
+    esp_restart();
+}
 
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
     {
@@ -79,7 +98,8 @@ static int gatt_svr_access_wifi(uint16_t conn_handle, uint16_t attr_handle, stru
             if (strlen(ble_ssid) > 0 && strlen(ble_pass) > 0) {
                 ESP_LOGI(TAG, "Both credentials received via BLE! Saving to NVS...");
                 save_wifi_credentials(ble_ssid, ble_pass); //save wifi_credentials to NVS
-                esp_restart();
+                ESP_LOGI(TAG, "Creating cleanup task for graceful restart...");
+                xTaskCreate(cleanup_and_restart_task, "cleanup", 2048, NULL, 5, NULL);
             } else {
                 ESP_LOGI(TAG, "Credentials incomplete, waiting for both SSID and PASS");
             }
