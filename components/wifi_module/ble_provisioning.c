@@ -77,12 +77,11 @@ static int gatt_svr_access_wifi(uint16_t conn_handle, uint16_t attr_handle, stru
             ESP_LOGI(TAG, "Received PASS via BLE: %s", ble_pass);
 
             if (strlen(ble_ssid) > 0 && strlen(ble_pass) > 0) {
-                ESP_LOGI(TAG, "Saving credentials received via BLE...");
+                ESP_LOGI(TAG, "Both credentials received via BLE! Saving to NVS...");
                 save_wifi_credentials(ble_ssid, ble_pass); //save wifi_credentials to NVS
-                stop_provisioning_manager();
-                stop_ble_provisioning();
-                vTaskDelay(pdMS_TO_TICKS(1000));
                 esp_restart();
+            } else {
+                ESP_LOGI(TAG, "Credentials incomplete, waiting for both SSID and PASS");
             }
         }
     }
