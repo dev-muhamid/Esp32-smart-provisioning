@@ -14,6 +14,7 @@
 #include "ble_provisioning.h"
 #include "wifi_module.h"
 #include "utilities.h"
+#include "status_led.h"
 
 static const char *TAG = "BLE_VISION";
 static char ble_ssid[32];
@@ -98,6 +99,7 @@ static int gatt_svr_access_wifi(uint16_t conn_handle, uint16_t attr_handle, stru
             if (strlen(ble_ssid) > 0 && strlen(ble_pass) > 0) {
                 ESP_LOGI(TAG, "Both credentials received via BLE! Saving to NVS...");
                 save_wifi_credentials(ble_ssid, ble_pass); //save wifi_credentials to NVS
+                status_led_set(LED_STATE_CREDS_SAVED);
                 ESP_LOGI(TAG, "Creating cleanup task for graceful restart...");
                 xTaskCreate(cleanup_and_restart_task, "cleanup", 2048, NULL, 5, NULL);
             } else {
@@ -188,9 +190,18 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
     (void)arg;
 
     switch (event->type) {
+    case BLE_GAP_EVENT_CONNECT:
+        if (event->connect.status == 0) {
+            ESP_LOGI(TAG, "BLE central connected");
+            status_led_set(LED_STATE_PROV_CLIENT);
+        } else if (!ble_shutdown_requested) {
+            ble_app_advertise();
+        }
+        return 0;
     case BLE_GAP_EVENT_DISCONNECT:
     case BLE_GAP_EVENT_ADV_COMPLETE:
         if (!ble_shutdown_requested) {
+            status_led_set(LED_STATE_PROVISIONING);
             ble_app_advertise();
         }
         return 0;
