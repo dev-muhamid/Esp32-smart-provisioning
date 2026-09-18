@@ -17,15 +17,20 @@ typedef enum {
 static esp_ping_handle_t ping_handle = NULL;
 static link_status_t link_status = LINK_UNKNOWN;
 static int consecutive_failures = 0;
+static uint32_t last_rtt_ms = 0;
 
 static void set_link_status(link_status_t status) {
     if (status == link_status) {
         return;
     }
+    link_status_t previous = link_status;
     link_status = status;
 
     if (status == LINK_ONLINE) {
-        ESP_LOGI(TAG, "Internet reachable");
+        // "again" only after a declared outage, not on the first probe.
+        ESP_LOGI(TAG, "Internet %s, reply from %s in %" PRIu32 " ms",
+                 previous == LINK_OFFLINE ? "reachable again" : "reachable",
+                 NET_MONITOR_TARGET_IP, last_rtt_ms);
         status_led_set(LED_STATE_CONNECTED);
     } else {
         ESP_LOGW(TAG, "Internet unreachable (%d consecutive misses)", consecutive_failures);
@@ -38,10 +43,18 @@ static void on_ping_success(esp_ping_handle_t hdl, void *args) {
     uint32_t elapsed_ms = 0;
     esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed_ms, sizeof(elapsed_ms));
 
-    consecutive_failures = 0;
-    if (link_status != LINK_ONLINE) {
-        ESP_LOGI(TAG, "Reply from %s in %" PRIu32 " ms", NET_MONITOR_TARGET_IP, elapsed_ms);
+    last_rtt_ms = elapsed_ms;
+
+    // A blip that never crossed the threshold leaves link_status at ONLINE,
+    // so set_link_status() below would say nothing. Report the recovery here
+    // instead: otherwise "No reply (1/3)" is the last line ever logged and
+    // there is no way to tell the link came back.
+    if (consecutive_failures > 0 && link_status == LINK_ONLINE) {
+        ESP_LOGI(TAG, "Internet reachable again after %d miss(es), reply from %s in %" PRIu32 " ms",
+                 consecutive_failures, NET_MONITOR_TARGET_IP, elapsed_ms);
     }
+
+    consecutive_failures = 0;
     set_link_status(LINK_ONLINE);
 }
 
