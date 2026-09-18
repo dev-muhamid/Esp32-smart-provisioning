@@ -5,14 +5,14 @@
 #include "web_server.h"
 #include "utilities.h"
 #include "status_led.h"
+#include "net_monitor.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
 #include "esp_event.h"
 #include "nvs_flash.h"
-#include "lwip/dns.h"
-#include "lwip/netdb.h"
 #include "nvs.h"
 #include <ctype.h>
+#include <string.h>
 
 static const char *TAG = "WIFI_CONN";
 static bool ble_provisioning_started = false;
@@ -57,6 +57,8 @@ esp_err_t save_wifi_credentials(const char* ssid, const char* password) {
 
 static void stop_softap_and_server(void) {
     ESP_LOGW("WIFI_MOD", "SoftAP timeout reached. Shutting down config mode...");
+
+    net_monitor_stop();
     
     // 1. Stop the Web Server
     // We'll need to store the server handle globally to stop it properly
@@ -84,6 +86,7 @@ void stop_provisioning_timer(void) {
 }
 
 static void start_provisioning_channels(int timeout_min) {
+    net_monitor_stop();
     wifi_init_softap();
 
     if (!ble_provisioning_started) {
@@ -123,40 +126,31 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ESP_LOGI(TAG, "WiFi connected!");
 
-        if (event_id == IP_EVENT_STA_GOT_IP) {
-            ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-            ESP_LOGI(TAG, "Success! Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "Success! Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
 
-            stop_provisioning_manager();
-            s_retry_num = 0;
+        stop_provisioning_manager();
+        s_retry_num = 0;
 
-            if (ble_provisioning_started) {
-                stop_ble_provisioning();
-                ble_provisioning_started = false;
-            }
-
-            wifi_mode_t wifi_mode;
-            ESP_ERROR_CHECK(esp_wifi_get_mode(&wifi_mode));
-            if (wifi_mode == WIFI_MODE_APSTA) {
-                ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-            }
-            
-            struct addrinfo hints = {
-                .ai_family = AF_INET,
-                .ai_socktype = SOCK_STREAM,
-            };
-            struct addrinfo* res;
-
-            int err = getaddrinfo("google.com", "80", &hints, &res);
-            if (err == 0) {
-                ESP_LOGI(TAG, "DNS Lookup Success! Internet is reachable!");
-                freeaddrinfo(res);
-                status_led_set(LED_STATE_CONNECTED);
-            } else {
-                ESP_LOGE(TAG, "DNS Lookup Failed. Check your router's internet connection");
-                status_led_set(LED_STATE_NO_INTERNET);
-            }
+        if (ble_provisioning_started) {
+            stop_ble_provisioning();
+            ble_provisioning_started = false;
         }
+
+        wifi_mode_t wifi_mode;
+        ESP_ERROR_CHECK(esp_wifi_get_mode(&wifi_mode));
+        if (wifi_mode == WIFI_MODE_APSTA) {
+            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        }
+
+        // Having an IP only proves the router accepted us. The monitor
+        // probes the WAN continuously and owns the LED from here on.
+        status_led_set(LED_STATE_CONNECTED);
+        net_monitor_start();
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
+        ESP_LOGW(TAG, "Lost IP address");
+        net_monitor_stop();
+        status_led_set(LED_STATE_CONNECTING);
     }
 }
 
@@ -221,7 +215,7 @@ void wifi_module_init(void) {
 
     // 3. Register our event handler
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL));
 
     //4. Check if we have saved credentials in NVS
     nvs_handle_t handle;
