@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "wifi_module.h"
+#include "status_led.h"
 // #include "ble_provisioning.h"
 #include "esp_log.h"
 
@@ -7,6 +8,9 @@
 
 void app_main(void) {
     ESP_LOGI("MAIN", "Starting Provisioning System...");
+
+    // 0. Bring up the indicator LED first so every stage below is visible
+    status_led_init();
 
     // 1. Initialize the Wi-Fi stack and NVS
     wifi_module_init(); 
