@@ -1,6 +1,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "wifi_module.h"
+#include "status_led.h"
 #include "utilities.h"
 #include <ctype.h>
 
@@ -75,6 +76,7 @@ esp_err_t save_handler(httpd_req_t *req) {
             // Save the DECODED versions of ssid and password
             ESP_LOGI(TAG, "Saving credentials to NVS...");
             save_wifi_credentials(decoded_ssid, decoded_pass);
+            status_led_set(LED_STATE_CREDS_SAVED);
             httpd_resp_send(req, "<h1>Credentials Saved! ESP32 will now restart...</h1>", HTTPD_RESP_USE_STRLEN);
             
             // Wait a moment and then restart
