@@ -4,6 +4,7 @@
 #include "ble_provisioning.h"
 #include "web_server.h"
 #include "utilities.h"
+#include "status_led.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
 #include "esp_event.h"
@@ -73,6 +74,7 @@ static void stop_softap_and_server(void) {
     ESP_ERROR_CHECK(esp_wifi_stop());
     wifi_driver_started = false;
     
+    status_led_set(LED_STATE_IDLE);
     ESP_LOGI("WIFI_MOD", "Radio disabled to save power.");
 }
 
@@ -91,6 +93,7 @@ static void start_provisioning_channels(int timeout_min) {
     }
 
     start_provisioning_manager(timeout_min);
+    status_led_set(LED_STATE_PROVISIONING);
 }
 
 // Event handler to catch WiFi events
@@ -98,9 +101,11 @@ static void event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
     static int s_retry_num = 0;
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        status_led_set(LED_STATE_CONNECTING);
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_num < MAX_WIFI_RETRY) {
+            status_led_set(LED_STATE_CONNECTING);
             esp_wifi_connect();
             s_retry_num++;
             ESP_LOGI(TAG, "Router not found. Retrying... (%d/%d)", s_retry_num, MAX_WIFI_RETRY);
@@ -109,6 +114,12 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             start_provisioning_channels(2);
             s_retry_num = 0;
         }
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+        ESP_LOGI(TAG, "A client joined the provisioning AP");
+        status_led_set(LED_STATE_PROV_CLIENT);
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        ESP_LOGI(TAG, "Client left the provisioning AP");
+        status_led_set(LED_STATE_PROVISIONING);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ESP_LOGI(TAG, "WiFi connected!");
 
@@ -140,8 +151,10 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             if (err == 0) {
                 ESP_LOGI(TAG, "DNS Lookup Success! Internet is reachable!");
                 freeaddrinfo(res);
+                status_led_set(LED_STATE_CONNECTED);
             } else {
                 ESP_LOGE(TAG, "DNS Lookup Failed. Check your router's internet connection");
+                status_led_set(LED_STATE_NO_INTERNET);
             }
         }
     }
