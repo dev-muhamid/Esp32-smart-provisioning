@@ -4,5 +4,6 @@ idf_component_register(SRCS
                     "ble_provisioning.c"
                     "utilities.c"
                     "status_led.c"
+                    "net_monitor.c"
                     INCLUDE_DIRS "include"
-                    PRIV_REQUIRES esp_wifi esp_event nvs_flash esp_http_server bt driver)
+                    PRIV_REQUIRES esp_wifi esp_event nvs_flash esp_http_server bt driver lwip)
